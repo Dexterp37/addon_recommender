@@ -10,12 +10,27 @@ function setupAutocomplete() {
     suggestions.push({id: addonId, text: addonMapping[addonId]});
   }
 
+  let sortFunc = function(data) {
+    return data.sort(function(a,b){
+        a = a.text.toLowerCase();
+        b = b.text.toLowerCase();
+        if (a == b) {
+          return -1;
+        }
+        return (a > b) ? 1 : -1;
+    });
+  };
+
   query = $('.select2, .select2-multiple').select2({ placeholder: 'Your Firefox Addons',
                                                      data: suggestions,
                                                      multiple: true,
                                                      openOnEnter: false,
-                                                     closeOnSelect: true})
-                                          .on("change", function(e) { suggestAddons(e.val) })
+                                                     closeOnSelect: true,
+                                                     sorter: sortFunc
+                                                   });
+  query.on("change", function(e) {
+    suggestAddons($(this).val().split(','));
+  });
   $('#search').click(search);
 }
 
