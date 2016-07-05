@@ -1,19 +1,13 @@
 "use strict";
 
-var priors = null;
-var likelihood = null;
-
-function load(data) {
-  priors = data['priors'];
-  likelihood = data['likelihood'];
-}
+var addonMapping = null;
+var rawItemsMatrix = null;
 
 function setupAutocomplete() {
-  var i =0;
   var suggestions = []
 
-  for (var prior in priors) {
-    suggestions.push({id: prior, text: prior})
+  for (var addonId in addonMapping) {
+    suggestions.push({id: addonId, text: addonMapping[addonId]});
   }
 
   query = $('.select2, .select2-multiple').select2({ placeholder: 'Your Firefox Addons',
@@ -21,36 +15,38 @@ function setupAutocomplete() {
                                                      multiple: true,
                                                      openOnEnter: false,
                                                      closeOnSelect: true})
-                                          .on("change", function(e) { inference(e.val) })
+                                          .on("change", function(e) { suggestAddons(e.val) })
   $('#search').click(search);
-  inference(query.select2('val')); // show priors
 }
 
-function inference(addons) {
-  var updatedPriors = {}
+function suggestAddons(addonIds) {
+  const addonIdsAsNumbers = addonIds.map(id => parseInt(id));
 
-  for (var prior in priors) {
-    var score = priors[prior];
+  // Build the query vector by setting the position of the queried addons to 1.0
+  // and the other to 0.0.
+  let addonVector =
+    rawItemsMatrix.map(addon => addonIdsAsNumbers.includes(addon.id) ? 1.0 : 0.0);
 
-    for (var i = 0; i < addons.length; i++) {
-      var addon = addons[i];
-      var term = 0;
+  // Approximate representation of the user in latent space.
+  const addonsMatrix = buildAddonsMatrix(rawItemsMatrix);
+  const tAddonsMatrix = math.transpose(addonsMatrix);
+  const tAddonsVector = math.transpose(addonVector);
+  let userFactors = math.multiply(addonVector, addonsMatrix);
+  const tUserFactors = math.transpose(userFactors);
 
-      if(likelihood[prior]) {
-        var lh = likelihood[prior];
-        var term = lh[addon] ? lh[addon] : 0;
-        score += term;
-      }
+  // Compute distance between the user and all the add-ons in latent space.
+  let distances = {};
+  rawItemsMatrix.forEach(addon => {
+    // We don't really need to show the items we requested. They will always
+    // end up with the greatest score.
+    if (!addonIdsAsNumbers.includes(addon.id)) {
+      const d = math.dot(tUserFactors, addon.features);
+      distances[addonMapping[addon.id]] = d;
     }
+  });
 
-    updatedPriors[prior] = score;
-  }
-
-  for (var i = 0; i < addons.length; i++) {
-    updatedPriors[addons[i]] = -Number.MAX_VALUE;
-  }
-
-  var sorted = getSortedKeys(updatedPriors);
+  // Update the dashboard with the suggestions.
+  var sorted = getSortedKeys(distances);
   var table = $('#recommendations');
   var rows = ""
 
@@ -71,7 +67,27 @@ function getSortedKeys(obj) {
   return keys.sort(function(a,b){return obj[b]-obj[a]});
 }
 
-$.getJSON('data/probabilities.json', function(data) {
-  load(data);
-  setupAutocomplete()
+function buildAddonsMatrix(data) {
+  let m = data.map(a => a.features);
+  // Each vector in |m| will be a row in the matrix.
+  return math.matrix(m, 'dense', 'number');
+}
+
+$.when(
+  $.getJSON('data/addon_mapping.json', function(data) {
+    addonMapping = data;
+  }),
+  $.getJSON('data/item_matrix.json', function(data) {
+    // Data is in the following format:
+    // [
+    //  ... { id: 123, features: [1, 2, 3]}, ...
+    // ]
+    rawItemsMatrix = data;
+  })
+).then(function() {
+  if (!addonMapping || !rawItemsMatrix) {
+    console.error("There was an error loading the data files.");
+    return;
+  }
+  setupAutocomplete();
 });
